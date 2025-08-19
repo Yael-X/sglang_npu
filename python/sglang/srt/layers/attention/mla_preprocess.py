@@ -259,12 +259,12 @@ class NPU_FusedMLAPreprocess(nn.Module):
             self.get_kv_cache_and_cache_idx(forward_batch)
         )
 
-        q_nope_out = torch.zeros(
+        q_nope_out = torch.empty(
             (hidden_states.shape[0], self.w_kc.shape[0], self.kvCache.shape[-1]),
             dtype=input_dtype,
             device=hidden_states.device,
         )
-        q_rope_out = torch.zeros(
+        q_rope_out = torch.empty(
             (hidden_states.shape[0], self.w_kc.shape[0], self.kvCacheRope.shape[-1]),
             dtype=input_dtype,
             device=hidden_states.device,

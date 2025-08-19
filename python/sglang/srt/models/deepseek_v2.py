@@ -146,6 +146,9 @@ if _is_hip:
         decode_attention_fwd_grouped_rope,
     )
 
+if _is_npu:
+    import torch_npu
+
 _is_flashinfer_available = is_flashinfer_available()
 _is_sm100_supported = is_cuda() and is_sm100_supported()
 
@@ -1178,23 +1181,57 @@ class DeepseekV2AttentionMLA(nn.Module):
         _, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
         kv_a, _ = latent_cache.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         latent_cache = latent_cache.unsqueeze(1)
-        kv_a = self.kv_a_layernorm(kv_a)
+        if _is_npu:
+            B, S = hidden_states.shape[0], 1
+            cos, sin = self.rotary_emb.get_cos_sin_cache(
+                positions, self.layer_id, hidden_states.dtype, offsets=None
+            )
+            q_pe = torch_npu.npu_interleave_rope(
+                q_pe.reshape(B, -1, S, self.qk_rope_head_dim),
+                cos,
+                sin,
+            )
+            q_pe = q_pe.reshape(B, -1, self.qk_rope_head_dim)
+
+            ckv_cache, k_rope_cache = forward_batch.token_to_kv_pool.get_kv_buffer(
+                self.layer_id
+            )
+            _, _, k_pe, kv_a = torch_npu.npu_kv_rmsnorm_rope_cache(
+                latent_cache.view(
+                    -1, 1, 1, self.kv_lora_rank + self.qk_rope_head_dim
+                ),  # bnsd
+                self.kv_a_layernorm.weight,
+                cos,
+                sin,
+                forward_batch.out_cache_loc.to(torch.int64),
+                k_rope_cache,
+                ckv_cache,
+                k_rope_scale=None,
+                c_kv_scale=None,
+                k_rope_offset=None,
+                c_kv_offset=None,
+                epsilon=self.kv_a_layernorm.variance_epsilon,
+                cache_mode="PA_BNSD",
+                is_output_kv=True,
+            )  # adapter NZ
+            k_pe = k_pe.reshape(B, -1, self.qk_rope_head_dim)
+        else:
+            kv_a = self.kv_a_layernorm(kv_a)
+
+            k_pe = latent_cache[:, :, self.kv_lora_rank :]
+            q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe, layer_id=self.layer_id)
+
         kv = self.kv_b_proj(kv_a)[0]
         kv = kv.view(-1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim)
         k_nope = kv[..., : self.qk_nope_head_dim]
         v = kv[..., self.qk_nope_head_dim :]
-        k_pe = latent_cache[:, :, self.kv_lora_rank :]
-        q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+
         q[..., self.qk_nope_head_dim :] = q_pe
         k = torch.empty_like(q)
         k[..., : self.qk_nope_head_dim] = k_nope
         k[..., self.qk_nope_head_dim :] = k_pe
 
-        if _is_npu:
-            forward_batch.token_to_kv_pool.set_kv_buffer(
-                self.attn_mha, forward_batch.out_cache_loc, kv_a.unsqueeze(1), k_pe
-            )
-        else:
+        if not _is_npu:
             latent_cache[:, :, : self.kv_lora_rank] = kv_a.unsqueeze(1)
             latent_cache[:, :, self.kv_lora_rank :] = k_pe
 
@@ -1290,7 +1327,7 @@ class DeepseekV2AttentionMLA(nn.Module):
             q_nope_out = torch.bmm(q_nope.transpose(0, 1), self.w_kc)
 
         q_nope_out = q_nope_out.transpose(0, 1)
-        q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+        q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe, layer_id=self.layer_id)
 
         return q_pe, k_pe, q_nope_out, k_nope, forward_batch, zero_allocator
 

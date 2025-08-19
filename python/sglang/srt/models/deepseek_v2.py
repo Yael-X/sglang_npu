@@ -515,6 +515,13 @@ class DeepseekV2MoE(nn.Module):
             kwargs["topk_output"] = self.topk(hidden_states, router_logits)
 
         final_hidden_states = self.experts(**kwargs)
+        if self.tp_size > 1 and not can_fuse_mlp_allreduce:
+            final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+        import torch.distributed as dist
+        print(f"=======rank:{dist.get_rank()},[DEBUG][{self.layer_id}] final_hidden_states shape: {final_hidden_states.shape}")
+        print(f"=======rank:{dist.get_rank()},[DEBUG][{self.layer_id}] final_hidden_states (first 5 rows):\n{final_hidden_states}")
+
+        
         if not _is_cuda and not _use_aiter:
             # fused in biased_grouped_topk so we can skip here
             final_hidden_states *= self.routed_scaling_factor
@@ -524,8 +531,6 @@ class DeepseekV2MoE(nn.Module):
             torch.add(final_hidden_states, shared_output, out=final_hidden_states_out)
             final_hidden_states = final_hidden_states_out
             sm.tag(final_hidden_states)
-        if self.tp_size > 1 and not can_fuse_mlp_allreduce:
-            final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
         return final_hidden_states
 
     def forward_cpu(
@@ -614,6 +619,9 @@ class DeepseekV2MoE(nn.Module):
             topk_weights=topk_weights,
             forward_batch=forward_batch,
         )
+        import torch.distributed as dist
+        print(f"=======rank:{dist.get_rank()},[DEBUG][{self.layer_id}] final_hidden_states shape: {final_hidden_states.shape}")
+        print(f"=======rank:{dist.get_rank()},[DEBUG][{self.layer_id}] final_hidden_states (first 5 rows):\n{final_hidden_states}")
 
         if shared_output is not None:
             x = shared_output

@@ -109,6 +109,10 @@ class EAGLEWorker(TpModelWorker):
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             target_worker.get_memory_pool()
         )
+        if is_npu():
+            self.token_to_kv_pool_allocator.speculative_num_draft_tokens = (
+                self.speculative_num_draft_tokens
+            )
 
         # Load hot token ids
         if self.speculative_algorithm.is_eagle3():

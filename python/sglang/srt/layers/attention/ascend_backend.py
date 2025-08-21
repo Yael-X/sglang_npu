@@ -334,7 +334,7 @@ class AscendAttnBackend(AttentionBackend):
             actual_seq_lengths=actual_seq_lengths,
             actual_seq_lengths_kv=actual_seq_lengths_kv,
         )
-        attn_output = torch.zeros_like(q_nope, dtype=q.dtype, device=q.device)
+        attn_output = torch.empty_like(q_nope, dtype=q.dtype, device=q.device)
         softmax_lse = torch.empty(1, dtype=q.dtype, device=q.device)
         torch_npu.npu_fused_infer_attention_score.out(
             q_nope,
@@ -467,7 +467,7 @@ class AscendAttnBackend(AttentionBackend):
                 antiquant_scale=None,
                 sparse_mode=0,
             )
-            output = torch.zeros_like(q_nope, dtype=q.dtype, device=q.device)
+            output = torch.empty_like(q_nope, dtype=q.dtype, device=q.device)
             softmax_lse = torch.empty(1, dtype=q.dtype, device=q.device)
 
             torch_npu.npu_fused_infer_attention_score.out(

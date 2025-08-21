@@ -131,6 +131,7 @@ jobs:
           bash scripts/npu_ci_exec.sh python3 $GITHUB_WORKSPACE/test/srt/test_ascend_disaggregation_deepep.py
 
       - name: Stop and remove container
+        if: always()
         run: bash scripts/npu_ci_a3_stop_container.sh
 
   pr-test-npu-finish:
